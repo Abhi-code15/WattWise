@@ -1,0 +1,332 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  WARDEN
+  STUDENT
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RoomType {
+  RESIDENTIAL
+  COMMON_MESS
+  COMMON_CANTEEN
+  COMMON_WARDEN
+  COMMON_TV_HALL
+  COMMON_WASHROOM
+  COMMON_CORRIDOR
+  COMMON_STAIRWELL
+  COMMON_OTHER
+}
+
+enum DeviceType {
+  VIRTUAL_SMART_METER
+  PHYSICAL_SMART_METER
+}
+
+enum DeviceStatus {
+  ONLINE
+  STALE
+  OFFLINE
+}
+
+enum SimulatorStatus {
+  RUNNING
+  PAUSED
+  STOPPED
+  OFFLINE
+}
+
+enum AlertType {
+  SUSTAINED_HIGH_POWER
+  OFFLINE_METER
+  UNEXPECTED_SURGE
+  DATA_QUALITY
+  BUDGET_WARNING
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum AlertStatus {
+  TRIGGERED
+  ACKNOWLEDGED
+  INVESTIGATING
+  RESOLVED
+}
+
+enum TariffType {
+  FLAT_RATE
+  SLAB
+}
+
+model Hostel {
+  id            String   @id @default(uuid())
+  name          String
+  code          String   @unique
+  configuration Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  floors  Floor[]
+  tariffs Tariff[]
+
+  @@map("hostels")
+}
+
+model Floor {
+  id          String   @id @default(uuid())
+  hostelId    String
+  floorCode   String   @unique
+  displayName String
+  floorNumber Int
+  totalRooms  Int
+  configuration Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  hostel Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  rooms  Room[]
+
+  @@map("floors")
+}
+
+model Room {
+  id                  String   @id @default(uuid())
+  floorId             String
+  roomCode            String   @unique
+  displayName         String
+  roomType            RoomType @default(RESIDENTIAL)
+  highPowerThresholdW Float    @default(800.0)
+  configuration       Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  floor       Floor            @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  devices     Device[]
+  assignments RoomAssignment[]
+  alerts      Alert[]
+
+  @@index([floorId])
+  @@index([roomType])
+  @@map("rooms")
+}
+
+model User {
+  id           String     @id @default(uuid())
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         UserRole   @default(STUDENT)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  assignments   RoomAssignment[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model RoomAssignment {
+  id        String    @id @default(uuid())
+  userId    String
+  roomId    String
+  validFrom DateTime  @default(now())
+  validTo   DateTime?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([roomId])
+  @@map("room_assignments")
+}
+
+model Device {
+  id              String          @id @default(uuid())
+  deviceUid       String          @unique
+  roomId          String?
+  deviceType      DeviceType      @default(VIRTUAL_SMART_METER)
+  secretKey       String?
+  simulatorStatus SimulatorStatus @default(RUNNING)
+  status          DeviceStatus    @default(ONLINE)
+  lastSeenAt      DateTime?
+  lastSequence    BigInt?         @default(0)
+  lastPowerW      Float?          @default(0)
+  lastEnergyKWh   Float?          @default(0)
+  configuration   Json?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  room            Room?           @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  energyReadings  EnergyReading[]
+  alerts          Alert[]
+  dailySummaries  DailySummary[]
+
+  @@index([roomId])
+  @@index([status])
+  @@map("devices")
+}
+
+model EnergyReading {
+  id                  String   @id @default(uuid())
+  deviceId            String
+  sequenceNumber      BigInt
+  eventTimestamp      DateTime
+  receivedAt          DateTime @default(now())
+  powerW              Float
+  voltageV            Float
+  currentA            Float
+  powerFactor         Float
+  cumulativeEnergyKWh Float
+  dataQuality         String   @default("valid")
+  rawPayload          Json?
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, sequenceNumber])
+  @@index([deviceId, eventTimestamp(sort: Desc)])
+  @@index([eventTimestamp(sort: Desc)])
+  @@map("energy_readings")
+}
+
+model Tariff {
+  id              String     @id @default(uuid())
+  hostelId        String
+  name            String
+  tariffType      TariffType @default(FLAT_RATE)
+  baseRatePerKWh  Float      @default(7.50)
+  fixedCharge     Float      @default(0.0)
+  slabConfig      Json?
+  currency        String     @default("INR")
+  effectiveFrom   DateTime   @default(now())
+  effectiveTo     DateTime?
+  isActive        Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  hostel Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+
+  @@index([hostelId, isActive])
+  @@map("tariffs")
+}
+
+model Budget {
+  id            String   @id @default(uuid())
+  scope         String   @default("HOSTEL")
+  scopeId       String
+  billingPeriod String
+  budgetAmount  Float
+  currency      String   @default("INR")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([scope, scopeId, billingPeriod])
+  @@map("budgets")
+}
+
+model Alert {
+  id                 String        @id @default(uuid())
+  deviceId           String
+  roomId             String?
+  alertType          AlertType
+  severity           AlertSeverity @default(WARNING)
+  status             AlertStatus   @default(TRIGGERED)
+  thresholdValue     Float?
+  triggeringValue    Float?
+  consecutiveCount   Int           @default(1)
+  message            String
+  investigationNotes String?
+  acknowledgedBy     String?
+  resolvedBy         String?
+  triggeredAt        DateTime      @default(now())
+  acknowledgedAt     DateTime?
+  resolvedAt         DateTime?
+  metadata           Json?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  device        Device         @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  room          Room?          @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  notifications Notification[]
+
+  @@index([deviceId])
+  @@index([roomId])
+  @@index([status])
+  @@index([triggeredAt(sort: Desc)])
+  @@map("alerts")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  alertId   String
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alert Alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model DailySummary {
+  id                  String   @id @default(uuid())
+  deviceId            String
+  roomId              String?
+  summaryDate         String
+  energyKWh           Float    @default(0.0)
+  peakPowerW          Float    @default(0.0)
+  avgPowerW           Float    @default(0.0)
+  estimatedCost       Float    @default(0.0)
+  readingCount        Int      @default(0)
+  dataQualitySummary  Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, summaryDate])
+  @@index([summaryDate])
+  @@map("daily_summaries")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?
+  actorEmail  String?
+  action      String
+  entityType  String
+  entityId    String?
+  details     Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
